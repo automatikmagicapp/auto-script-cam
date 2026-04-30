@@ -1,179 +1,74 @@
+# Reverter Teleprompter para Web (PWA opcional)
 
-# Teleprompter Automático — App Android Nativo
-
-App de teleprompter para gravação de vídeos usando a câmera frontal do celular, com texto rolando automaticamente (por voz ou velocidade manual), biblioteca de roteiros e armazenamento dos vídeos na nuvem com possibilidade de download/compartilhamento.
-
----
-
-## O que será construído
-
-### 1. Tela inicial / Biblioteca de roteiros
-- Lista dos roteiros salvos (título, prévia do texto, data)
-- Botão "Novo roteiro" e "Nova gravação"
-- Lista das gravações já feitas (com player, botão de download e botão de compartilhar link)
-
-### 2. Editor de roteiro
-- Campo de título e área de texto grande para colar/escrever o script
-- Botão "Salvar" e "Iniciar gravação com este roteiro"
-
-### 3. Tela de gravação (a principal)
-Layout em camadas:
-```text
-+----------------------------------+
-|   [vídeo da câmera frontal]      |
-|                                  |
-|   ┌──────────────────────────┐   |
-|   │   TEXTO ROLANDO AQUI     │   |  <- overlay semi-transparente
-|   │   (linha destacada no    │   |
-|   │    centro)               │   |
-|   └──────────────────────────┘   |
-|                                  |
-|  [⏺ Gravar]  [⏸]  [⏹]  [⚙]     |
-+----------------------------------+
-```
-- Câmera frontal (selfie) ocupa a tela toda
-- Texto sobreposto, com painel ajustável (tamanho da fonte, cor, opacidade do fundo, largura)
-- Linha central destacada para guiar o olhar
-- Contagem regressiva 3-2-1 antes de começar a gravar
-- Dois modos de rolagem (escolhidos antes de gravar):
-  - **Manual:** velocidade em palavras por minuto (slider 80-250 PPM)
-  - **Por voz:** reconhecimento de fala em português detecta as palavras lidas e avança o texto na sua velocidade real (usa Web Speech API nativa do Android via WebView)
-- Controles: iniciar, pausar, parar, refazer
-- Ao parar, abre tela de revisão
-
-### 4. Tela de revisão da gravação
-- Player com o vídeo gravado
-- Botões: "Salvar na nuvem", "Baixar para o celular", "Descartar", "Regravar"
-- Campo de título opcional
-
-### 5. Configurações
-- Tamanho da fonte padrão, cor do texto, cor de fundo do overlay, opacidade
-- Espelhamento horizontal (desligado por padrão — pode ser adicionado depois se quiser)
-- Velocidade padrão (PPM)
-- Modo de rolagem padrão (manual/voz)
-
-### 6. Autenticação
-- Login com email/senha e Google
-- Cada usuário vê apenas seus próprios roteiros e vídeos
+Sem problemas — vamos remover toda a parte de Android nativo (Capacitor) e deixar o app rodando como aplicação **web pura**, acessível pelo navegador do celular ou computador. A funcionalidade continua a mesma: câmera frontal, teleprompter rolando, gravação de vídeo e armazenamento na nuvem.
 
 ---
 
-## Armazenamento e nuvem
+## O que muda
 
-- **Roteiros** salvos em banco de dados (Lovable Cloud) — sincronizam entre dispositivos
-- **Vídeos** enviados para storage privado na nuvem após a gravação
-- Cada vídeo pode ser:
-  - Reproduzido dentro do app
-  - Baixado para a galeria do celular
-  - Compartilhado por link temporário (signed URL)
-- Política de segurança: cada usuário só acessa seus próprios arquivos
+- O app continua **100% funcional** no navegador (Chrome/Edge no Android, Safari no iPhone, navegador no desktop).
+- A câmera frontal, gravação de vídeo (MediaRecorder), reconhecimento de voz e upload para a nuvem **funcionam normalmente no navegador moderno**.
+- Você acessa o app pelo link de publicação do Lovable (ex.: `seu-app.lovable.app`) — sem precisar instalar nada, sem Android Studio, sem APK.
+- Opcional: o usuário pode adicionar à tela inicial do celular ("Adicionar à tela de início") e ele abre como se fosse um app.
 
 ---
 
-## Detalhes técnicos
+## O que será removido
 
-- **Frontend:** React + Vite + Tailwind + shadcn/ui
-- **Backend:** Lovable Cloud (Supabase) — auth, banco e storage
-- **Mobile wrapper:** Capacitor (gera o projeto Android nativo)
-- **Plugins Capacitor:** `@capacitor/camera`, `@capacitor/filesystem`, `@capacitor/share`, plus `MediaRecorder` API do WebView para gravar vídeo
-- **Reconhecimento de voz:** Web Speech API (`webkitSpeechRecognition`) — funciona no WebView do Android
-- **Tabelas no banco:**
-  - `profiles` (dados do usuário)
-  - `scripts` (roteiros: título, conteúdo, user_id)
-  - `recordings` (metadados: título, caminho do arquivo, duração, script_id, user_id)
-  - `user_settings` (preferências visuais e de rolagem)
-  - `user_roles` (separada, para segurança)
-- RLS habilitada em todas as tabelas
-- Bucket privado `recordings` no Supabase Storage
+1. **Arquivo `capacitor.config.ts`** — não é mais necessário.
+2. **Dependências do Capacitor** no `package.json`:
+   - `@capacitor/core`
+   - `@capacitor/cli`
+   - `@capacitor/android`
+   - `@capacitor/camera`
+   - `@capacitor/filesystem`
+   - `@capacitor/share` (se houver)
+3. **Pasta `android/`** se existir (gerada pelo `npx cap add android`).
+4. **Qualquer import de `@capacitor/*`** no código (provavelmente em `Record.tsx`) — substituído pelas APIs nativas do navegador, que já estavam sendo usadas como base (`getUserMedia`, `MediaRecorder`, `webkitSpeechRecognition`).
 
 ---
 
-## Guia passo a passo: Compilar no Android Studio
+## O que será mantido / ajustado
 
-Depois que eu terminar o app, você seguirá estes passos no seu computador:
-
-### A. Pré-requisitos (uma vez só)
-1. **Instalar Node.js 20+** — https://nodejs.org
-2. **Instalar Git** — https://git-scm.com
-3. **Instalar Android Studio** — https://developer.android.com/studio
-   - Durante a instalação, marque: Android SDK, Android SDK Platform, Android Virtual Device
-4. Abrir o Android Studio uma vez para ele baixar os SDKs (deixe rodar até terminar)
-5. Configurar a variável `ANDROID_HOME` (o instalador geralmente faz isso; em caso de erro, eu te oriento)
-
-### B. Trazer o projeto para o seu computador
-1. No Lovable, clicar em **GitHub → Connect to GitHub** e exportar o projeto
-2. No seu computador, abrir o terminal e rodar:
-   ```bash
-   git clone https://github.com/SEU_USUARIO/NOME_DO_REPO.git
-   cd NOME_DO_REPO
-   npm install
-   ```
-
-### C. Adicionar a plataforma Android
-```bash
-npx cap add android
-npx cap update android
-npm run build
-npx cap sync android
-```
-
-### D. Abrir no Android Studio
-```bash
-npx cap open android
-```
-Isso abre o projeto Android. Aguarde o "Gradle sync" terminar (barra inferior).
-
-### E. Rodar em emulador
-1. No Android Studio: menu **Tools → Device Manager → Create Device**
-2. Escolher um Pixel 6, baixar a imagem do Android 13+
-3. Clicar no botão verde "Run" (▶) no topo
-
-### F. Rodar em celular físico
-1. No celular: Configurações → Sobre o telefone → tocar 7x em "Número da versão" para ativar modo desenvolvedor
-2. Em Opções do desenvolvedor → ativar **Depuração USB**
-3. Conectar o celular por USB, autorizar
-4. No Android Studio, selecionar seu celular no topo e clicar Run
-
-### G. Gerar APK para instalar manualmente
-1. Menu **Build → Build Bundle(s) / APK(s) → Build APK(s)**
-2. Quando terminar, clicar em "locate" na notificação
-3. Copiar o `app-debug.apk` para o celular e instalar
-
-### H. Gerar AAB para Play Store (opcional)
-1. Menu **Build → Generate Signed Bundle / APK → Android App Bundle**
-2. Criar uma keystore (guarde a senha!)
-3. Selecionar "release" e gerar
-4. Subir o `.aab` no Google Play Console
-
-### I. Atualizações futuras
-Sempre que eu fizer mudanças no Lovable:
-```bash
-git pull
-npm install
-npm run build
-npx cap sync android
-```
-Depois rodar de novo no Android Studio.
-
-Vou te acompanhar em cada etapa quando chegar a hora — qualquer erro que aparecer, é só me mandar a mensagem que eu te ajudo a resolver.
+1. **Tela de gravação (`Record.tsx`)** — continua usando:
+   - `navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true })` para a câmera frontal.
+   - `MediaRecorder` para gravar o vídeo.
+   - `webkitSpeechRecognition` para o modo voz.
+   - Upload do blob direto para o Supabase Storage.
+2. **Download do vídeo** — em vez de salvar na galeria via Capacitor Filesystem, usa o padrão web: cria um link `<a download>` com o blob ou com a signed URL da nuvem. O navegador baixa para a pasta de Downloads do dispositivo.
+3. **Compartilhar** — usa a **Web Share API** (`navigator.share`) quando disponível (funciona em celular). Caso contrário, mostra a signed URL para copiar.
+4. **Backend (Lovable Cloud)** — **não muda nada**. Auth, banco, storage e RLS continuam exatamente como estão.
+5. **Todas as outras telas** (Library, ScriptEditor, SettingsPage, Auth) — sem alteração.
 
 ---
 
-## Permissões Android que serão configuradas
-- `CAMERA` — acessar a câmera frontal
-- `RECORD_AUDIO` — gravar áudio do vídeo + reconhecimento de voz
-- `INTERNET` — sincronizar com a nuvem
-- `WRITE_EXTERNAL_STORAGE` / `READ_MEDIA_VIDEO` — salvar vídeos na galeria
+## Como você vai usar o app depois
+
+1. Eu publico o app pelo botão **Publish** no topo do Lovable.
+2. Você recebe um link tipo `teleprompter.lovable.app`.
+3. No celular Android: abre esse link no **Chrome**, dá permissão de câmera e microfone na primeira vez, e usa normalmente.
+4. Para deixar parecendo um app: no Chrome, menu (⋮) → **"Adicionar à tela inicial"**. Cria um ícone na home que abre direto o teleprompter em tela cheia.
+5. No iPhone: mesmo processo no Safari → botão compartilhar → "Adicionar à Tela de Início".
 
 ---
 
-## Ordem de implementação
-1. Configurar Lovable Cloud (auth, banco, storage, RLS)
-2. Telas de login/cadastro
-3. Biblioteca + editor de roteiros
-4. Tela de gravação com câmera, overlay de texto e modo manual
-5. Modo voz (reconhecimento de fala)
-6. Upload na nuvem + download + compartilhamento
-7. Tela de configurações e contagem regressiva
-8. Setup do Capacitor + configuração das permissões Android
-9. Testes finais e guia de compilação personalizado
+## Observações técnicas importantes
+
+- **Câmera no navegador exige HTTPS** — o Lovable já serve em HTTPS, então funciona.
+- **MediaRecorder no Safari iOS** tem suporte mais limitado; gravações longas podem ter limites. Funciona bem em Chrome Android, Edge e desktop.
+- **Reconhecimento de voz (`webkitSpeechRecognition`)** funciona em Chrome (Android e desktop) e Edge. **Não funciona em Safari/iOS** — nesse caso, o usuário usa apenas o modo manual (PPM). Vou deixar a UI esconder a opção de voz quando o navegador não suportar.
+- **Sem PWA com service worker** por padrão (evita problemas de cache no preview do Lovable). Apenas um `manifest.json` simples para permitir "Adicionar à tela inicial" com ícone e tela cheia — sem funcionamento offline.
+
+---
+
+## Passos da execução
+
+1. Remover `capacitor.config.ts`.
+2. Desinstalar pacotes `@capacitor/*` do `package.json`.
+3. Limpar imports de Capacitor em `Record.tsx` e qualquer outro arquivo.
+4. Substituir o "salvar na galeria" pelo download via link do navegador.
+5. Adicionar `public/manifest.json` simples + meta tags no `index.html` para tornar instalável (sem service worker).
+6. Ajustar `Record.tsx` para esconder o modo voz se `webkitSpeechRecognition` não existir.
+7. Testar no preview: gravação, upload, download e compartilhamento.
+
+Depois disso, é só clicar em **Publish** e usar o link no celular. Sem Android Studio, sem compilação, sem APK.
