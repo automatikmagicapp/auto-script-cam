@@ -440,6 +440,25 @@ const Record = () => {
               <span className="text-white text-sm font-mono">REC</span>
             </div>
           )}
+
+          {/* Live speed control during recording (manual mode only) */}
+          {phase === "recording" && mode === "manual" && (
+            <div className="absolute top-4 right-4 z-20 bg-black/70 backdrop-blur rounded-2xl p-3 w-64 space-y-2 border border-white/10">
+              <div className="flex items-center justify-between text-white text-xs">
+                <span className="opacity-70">Velocidade</span>
+                <span className="font-mono">{wpm} ppm</span>
+              </div>
+              <Slider value={[wpm]} min={60} max={500} step={5} onValueChange={(v) => updateWpm(v[0])} />
+              <div className="flex gap-2">
+                <Button size="sm" variant="secondary" className="flex-1 h-8" onClick={() => updateWpm(wpm - 10)}>
+                  <Minus className="w-3 h-3 mr-1" />10
+                </Button>
+                <Button size="sm" variant="secondary" className="flex-1 h-8" onClick={() => updateWpm(wpm + 10)}>
+                  <Plus className="w-3 h-3 mr-1" />10
+                </Button>
+              </div>
+            </div>
+          )}
         </>
       )}
 
