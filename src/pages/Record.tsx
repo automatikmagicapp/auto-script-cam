@@ -7,7 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Circle, Square, Pause, Play, Loader2, Mic, Gauge, Settings2, Upload, RotateCcw, Check } from "lucide-react";
+import { ArrowLeft, Circle, Square, Pause, Play, Loader2, Mic, Gauge, Settings2, Upload, RotateCcw, Check, Minus, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 type Phase = "setup" | "countdown" | "recording" | "review";
@@ -42,6 +42,12 @@ const Record = () => {
   const [bgOpacity, setBgOpacity] = useState(0.45);
   const [showPanel, setShowPanel] = useState(false);
   const [countdown, setCountdown] = useState(0);
+
+  // Refs to keep latest values inside the rAF loop (avoids stale closure)
+  const wpmRef = useRef(140);
+  const fontSizeRef = useRef(42);
+  useEffect(() => { wpmRef.current = wpm; }, [wpm]);
+  useEffect(() => { fontSizeRef.current = fontSize; }, [fontSize]);
 
   // Recording
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -118,7 +124,8 @@ const Record = () => {
     };
   }, [initCamera]);
 
-  // Manual scroll loop (px per second based on WPM and avg word height)
+  // Manual scroll loop (px per second based on current WPM and font size).
+  // Reads from refs so slider changes apply live during recording.
   const startManualScroll = () => {
     lastTsRef.current = 0;
     const tick = (ts: number) => {
@@ -126,14 +133,28 @@ const Record = () => {
       if (lastTsRef.current === 0) lastTsRef.current = ts;
       const dt = (ts - lastTsRef.current) / 1000;
       lastTsRef.current = ts;
-      // Approximate: 1 line ~ 1.4 * fontSize, ~7 words per line
-      const linesPerSec = wpm / 60 / 7;
-      const pxPerSec = linesPerSec * fontSize * 1.4;
+      // Direct, responsive formula: doubling wpm doubles real on-screen speed.
+      const pxPerSec = (wpmRef.current / 60) * (fontSizeRef.current * 0.18);
       scrollPosRef.current += pxPerSec * dt;
       scrollRef.current.scrollTop = scrollPosRef.current;
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
+  };
+
+  // Persist wpm preference (debounced) when user changes it
+  const wpmSaveTimer = useRef<number | null>(null);
+  const persistWpm = (value: number) => {
+    if (!user) return;
+    if (wpmSaveTimer.current) window.clearTimeout(wpmSaveTimer.current);
+    wpmSaveTimer.current = window.setTimeout(() => {
+      supabase.from("user_settings").update({ wpm: value }).eq("user_id", user.id);
+    }, 600);
+  };
+  const updateWpm = (value: number) => {
+    const v = Math.max(60, Math.min(500, value));
+    setWpm(v);
+    persistWpm(v);
   };
 
   // Voice recognition mode
@@ -336,7 +357,7 @@ const Record = () => {
               {mode === "manual" && (
                 <div>
                   <label className="text-xs text-muted-foreground">Velocidade: {wpm} palavras/min</label>
-                  <Slider value={[wpm]} min={80} max={250} step={5} onValueChange={(v) => setWpm(v[0])} />
+                  <Slider value={[wpm]} min={60} max={500} step={5} onValueChange={(v) => updateWpm(v[0])} />
                 </div>
               )}
             </Card>
