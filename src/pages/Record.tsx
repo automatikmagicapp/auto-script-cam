@@ -463,7 +463,7 @@ const Record = () => {
             </div>
           )}
 
-          {/* Live speed control during recording (manual mode only) */}
+          {/* Live speed control during recording — manual mode */}
           {phase === "recording" && mode === "manual" && (
             <div className="absolute top-4 right-4 z-20 bg-black/70 backdrop-blur rounded-2xl p-3 w-64 space-y-2 border border-white/10">
               <div className="flex items-center justify-between text-white text-xs">
@@ -477,6 +477,51 @@ const Record = () => {
                 </Button>
                 <Button size="sm" variant="secondary" className="flex-1 h-8" onClick={() => updateWpm(wpm + 10)}>
                   <Plus className="w-3 h-3 mr-1" />10
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Live pace control during recording — voice mode */}
+          {phase === "recording" && mode === "voice" && (
+            <div className="absolute top-4 right-4 z-20 bg-black/70 backdrop-blur rounded-2xl p-3 w-64 space-y-2 border border-white/10">
+              <div className="flex items-center justify-between text-white text-xs">
+                <span className="opacity-70">Ritmo (voz)</span>
+                <span className="font-mono">
+                  {voiceBoost === 0 ? "sincronizado" : `${voiceBoost > 0 ? "+" : ""}${Math.round(voiceBoost * 100)}%`}
+                </span>
+              </div>
+              <Slider
+                value={[voiceBoost * 100]}
+                min={-100}
+                max={100}
+                step={5}
+                onValueChange={(v) => setVoiceBoost(v[0] / 100)}
+              />
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="flex-1 h-8"
+                  onClick={() => setVoiceBoost(Math.max(-1, +(voiceBoost - 0.1).toFixed(2)))}
+                >
+                  <Minus className="w-3 h-3 mr-1" />Lento
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="flex-1 h-8"
+                  onClick={() => setVoiceBoost(0)}
+                >
+                  0
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="flex-1 h-8"
+                  onClick={() => setVoiceBoost(Math.min(1, +(voiceBoost + 0.1).toFixed(2)))}
+                >
+                  <Plus className="w-3 h-3 mr-1" />Rápido
                 </Button>
               </div>
             </div>
