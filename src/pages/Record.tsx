@@ -7,11 +7,13 @@ import { Slider } from "@/components/ui/slider";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Circle, Square, Pause, Play, Loader2, Mic, Gauge, Settings2, Upload, RotateCcw, Check, Minus, Plus, Music, Volume2, VolumeX, SkipBack, SkipForward, Download, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowLeft, Circle, Square, Pause, Play, Loader2, Mic, Gauge, Settings2, Upload, RotateCcw, Check, Minus, Plus, Music, Volume2, VolumeX, SkipBack, SkipForward, Download, ZoomIn, ZoomOut, SwitchCamera, Smartphone, Lock } from "lucide-react";
 import { toast } from "sonner";
 
 type Phase = "setup" | "countdown" | "recording" | "review";
 type Mode = "manual" | "voice";
+type Orientation = "portrait" | "landscape";
+type Facing = "user" | "environment";
 
 interface UserSettings {
   font_size: number;
@@ -91,6 +93,30 @@ const Record = () => {
   });
   const [showZoom, setShowZoom] = useState(false);
 
+  // ===== Stories 9:16 stage + camera facing + canvas composition =====
+  const [orientation, setOrientation] = useState<Orientation>(() =>
+    typeof window !== "undefined" && window.matchMedia("(orientation: landscape)").matches
+      ? "landscape"
+      : "portrait",
+  );
+  // When recording starts we lock the orientation chosen at that moment.
+  const [lockedOrientation, setLockedOrientation] = useState<Orientation | null>(null);
+  const activeOrientation: Orientation = lockedOrientation ?? orientation;
+
+  const [facing, setFacing] = useState<Facing>(() => {
+    if (typeof window === "undefined") return "user";
+    const saved = window.localStorage.getItem("teleprompter:lastFacing");
+    return saved === "environment" ? "environment" : "user";
+  });
+  const [hasMultipleCameras, setHasMultipleCameras] = useState(false);
+  const [switchingCamera, setSwitchingCamera] = useState(false);
+
+  // Canvas composition for true 9:16 / 16:9 output
+  const stageRef = useRef<HTMLDivElement>(null);
+  const compositionCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const compositionRafRef = useRef<number | null>(null);
+  const compositionStreamRef = useRef<MediaStream | null>(null);
+
   // Teleprompter scroll
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollPosRef = useRef(0);
@@ -167,11 +193,14 @@ const Record = () => {
   }, [user, scriptId]);
 
   // Camera setup
-  const initCamera = useCallback(async () => {
+  const initCamera = useCallback(async (preferredFacing?: Facing) => {
     try {
+      const useFacing = preferredFacing ?? facing;
+      // Stop any existing stream first to release the device cleanly.
+      streamRef.current?.getTracks().forEach((t) => t.stop());
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: "user",
+          facingMode: { ideal: useFacing },
           width: { ideal: 1920 },
           height: { ideal: 1080 },
         },
@@ -201,21 +230,74 @@ const Record = () => {
           setZoomRange({ min: 0.6, max: 3, step: 0.1, native: false });
         }
       }
+
+      // Detect if there's more than one camera (front + back)
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter((d) => d.kind === "videoinput");
+        setHasMultipleCameras(cams.length > 1);
+      } catch {}
     } catch (err) {
       toast.error("Não foi possível acessar a câmera/microfone");
       console.error(err);
     }
-  }, []);
+  }, [facing]);
 
   useEffect(() => {
-    initCamera();
+    initCamera(facing);
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop());
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       recognitionRef.current?.stop?.();
       try { audioCtxRef.current?.close(); } catch {}
+      if (compositionRafRef.current) cancelAnimationFrame(compositionRafRef.current);
+      compositionStreamRef.current?.getTracks().forEach((t) => t.stop());
     };
-  }, [initCamera]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Track viewport orientation (only updates `orientation` when not locked).
+  useEffect(() => {
+    const update = () => {
+      const isLandscape = window.matchMedia("(orientation: landscape)").matches;
+      setOrientation(isLandscape ? "landscape" : "portrait");
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+    };
+  }, []);
+
+  // Switch between front (user) and back (environment) camera.
+  const switchCamera = async () => {
+    if (switchingCamera) return;
+    setSwitchingCamera(true);
+    const next: Facing = facing === "user" ? "environment" : "user";
+    const wasRecording = phase === "recording" && recorderRef.current && !isPaused;
+    try {
+      // If actively recording, pause first to keep the file consistent.
+      if (wasRecording) {
+        try { recorderRef.current?.pause(); } catch {}
+      }
+      await initCamera(next);
+      setFacing(next);
+      window.localStorage.setItem("teleprompter:lastFacing", next);
+      // Reset zoom to widest of the new camera
+      setZoom(zoomRange.native ? zoomRange.min : 1);
+      if (wasRecording) {
+        try { recorderRef.current?.resume(); } catch {}
+      }
+      toast.success(next === "user" ? "Câmera frontal" : "Câmera traseira");
+    } catch (e) {
+      console.error(e);
+      toast.error("Não foi possível trocar de câmera");
+    } finally {
+      setSwitchingCamera(false);
+    }
+  };
 
   // Apply zoom (native track constraint when available; CSS fallback otherwise)
   useEffect(() => {
