@@ -1,19 +1,33 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Save, Video, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { MusicPanel, type ScriptMusicConfig } from "@/components/MusicPanel";
 
 const ScriptEditor = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [music, setMusic] = useState<ScriptMusicConfig>({
+    music_path: null,
+    music_filename: null,
+    music_autoplay: false,
+    music_volume: 0.6,
+    music_loop: true,
+    music_start_seconds: 0,
+    music_ducking: true,
+    music_fade_in: 2,
+    music_fade_out: 2,
+  });
 
   useEffect(() => {
     (async () => {
@@ -22,6 +36,17 @@ const ScriptEditor = () => {
       if (data) {
         setTitle(data.title);
         setContent(data.content);
+        setMusic({
+          music_path: data.music_path,
+          music_filename: data.music_filename,
+          music_autoplay: data.music_autoplay,
+          music_volume: Number(data.music_volume),
+          music_loop: data.music_loop,
+          music_start_seconds: data.music_start_seconds,
+          music_ducking: data.music_ducking,
+          music_fade_in: data.music_fade_in,
+          music_fade_out: data.music_fade_out,
+        });
       }
       setLoading(false);
     })();
@@ -66,8 +91,11 @@ const ScriptEditor = () => {
           value={content}
           onChange={(e) => setContent(e.target.value)}
           placeholder="Cole ou escreva o texto que você vai ler..."
-          className="flex-1 min-h-[400px] text-base leading-relaxed resize-none"
+          className="min-h-[300px] text-base leading-relaxed resize-none"
         />
+        {user && id && (
+          <MusicPanel scriptId={id} userId={user.id} config={music} onChange={setMusic} />
+        )}
         <Button size="lg" onClick={recordNow} className="w-full">
           <Video className="w-5 h-5 mr-2" />Gravar agora
         </Button>

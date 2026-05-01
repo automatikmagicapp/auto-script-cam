@@ -84,6 +84,15 @@ export type Database = {
           content: string
           created_at: string
           id: string
+          music_autoplay: boolean
+          music_ducking: boolean
+          music_fade_in: number
+          music_fade_out: number
+          music_filename: string | null
+          music_loop: boolean
+          music_path: string | null
+          music_start_seconds: number
+          music_volume: number
           title: string
           updated_at: string
           user_id: string
@@ -92,6 +101,15 @@ export type Database = {
           content?: string
           created_at?: string
           id?: string
+          music_autoplay?: boolean
+          music_ducking?: boolean
+          music_fade_in?: number
+          music_fade_out?: number
+          music_filename?: string | null
+          music_loop?: boolean
+          music_path?: string | null
+          music_start_seconds?: number
+          music_volume?: number
           title: string
           updated_at?: string
           user_id: string
@@ -100,6 +118,15 @@ export type Database = {
           content?: string
           created_at?: string
           id?: string
+          music_autoplay?: boolean
+          music_ducking?: boolean
+          music_fade_in?: number
+          music_fade_out?: number
+          music_filename?: string | null
+          music_loop?: boolean
+          music_path?: string | null
+          music_start_seconds?: number
+          music_volume?: number
           title?: string
           updated_at?: string
           user_id?: string
