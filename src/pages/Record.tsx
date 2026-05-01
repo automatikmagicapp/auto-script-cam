@@ -94,11 +94,10 @@ const Record = () => {
   const [showZoom, setShowZoom] = useState(false);
 
   // ===== Stories 9:16 stage + camera facing + canvas composition =====
-  const [orientation, setOrientation] = useState<Orientation>(() =>
-    typeof window !== "undefined" && window.matchMedia("(orientation: landscape)").matches
-      ? "landscape"
-      : "portrait",
-  );
+  // Default is ALWAYS 9:16 Stories (main mode). User toggles to 16:9 manually
+  // via the format badge button. We never auto-flip based on the device's
+  // physical orientation — that would surprise the user mid-setup.
+  const [orientation, setOrientation] = useState<Orientation>("portrait");
   // When recording starts we lock the orientation chosen at that moment.
   const [lockedOrientation, setLockedOrientation] = useState<Orientation | null>(null);
   const activeOrientation: Orientation = lockedOrientation ?? orientation;
@@ -280,20 +279,10 @@ const Record = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orientation]);
 
-  // Track viewport orientation (only updates `orientation` when not locked).
-  useEffect(() => {
-    const update = () => {
-      const isLandscape = window.matchMedia("(orientation: landscape)").matches;
-      setOrientation(isLandscape ? "landscape" : "portrait");
-    };
-    update();
-    window.addEventListener("resize", update);
-    window.addEventListener("orientationchange", update);
-    return () => {
-      window.removeEventListener("resize", update);
-      window.removeEventListener("orientationchange", update);
-    };
-  }, []);
+  // Note: we deliberately do NOT listen to device `orientationchange` to
+  // change the recording format. The format (9:16 / 16:9) is controlled
+  // explicitly by the user via the badge toggle so accidentally rotating
+  // the phone never produces a half-vertical / half-horizontal file.
 
   // Switch between front (user) and back (environment) camera.
   const switchCamera = async () => {
@@ -837,12 +826,21 @@ const Record = () => {
           }
         />
 
-        {/* Format badge */}
-        <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-white text-[11px] font-medium">
+        {/* Format badge — also toggles 9:16 <-> 16:9 when not recording */}
+        <button
+          type="button"
+          onClick={() => {
+            if (lockedOrientation) return; // locked during recording
+            setOrientation((o) => (o === "portrait" ? "landscape" : "portrait"));
+          }}
+          disabled={!!lockedOrientation}
+          className="absolute top-3 left-3 z-30 flex items-center gap-1.5 bg-black/60 hover:bg-black/80 disabled:opacity-80 disabled:cursor-not-allowed backdrop-blur px-2.5 py-1 rounded-full text-white text-[11px] font-medium transition-colors"
+          title={lockedOrientation ? "Formato travado durante a gravação" : "Tocar para alternar entre 9:16 Stories e 16:9"}
+        >
           <Smartphone className="w-3 h-3" />
           <span>{activeOrientation === "portrait" ? "9:16 Stories" : "16:9"}</span>
           {lockedOrientation && <Lock className="w-3 h-3 ml-0.5 opacity-70" />}
-        </div>
+        </button>
 
       {/* Floating zoom control (visible during setup, countdown and recording) */}
       {phase !== "review" && (
