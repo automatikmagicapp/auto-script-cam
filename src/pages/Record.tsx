@@ -541,6 +541,21 @@ const Record = () => {
         className={`absolute inset-0 w-full h-full object-cover ${settings?.mirror ? "" : "scale-x-[-1]"}`}
       />
 
+      {/* Hidden audio element for background music */}
+      {musicUrl && (
+        <audio
+          ref={musicAudioRef}
+          src={musicUrl}
+          preload="auto"
+          crossOrigin="anonymous"
+          onLoadedMetadata={(e) => setMusicDuration((e.target as HTMLAudioElement).duration)}
+          onTimeUpdate={(e) => setMusicTime((e.target as HTMLAudioElement).currentTime)}
+          onPlay={() => setMusicPlaying(true)}
+          onPause={() => setMusicPlaying(false)}
+          onEnded={() => setMusicPlaying(false)}
+        />
+      )}
+
       {/* Top bar */}
       {phase === "setup" && (
         <div className="absolute top-0 left-0 right-0 p-4 flex items-center justify-between bg-gradient-to-b from-black/70 to-transparent z-20">
