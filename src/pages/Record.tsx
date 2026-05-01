@@ -7,7 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Circle, Square, Pause, Play, Loader2, Mic, Gauge, Settings2, Upload, RotateCcw, Check, Minus, Plus, Music, Volume2, VolumeX, SkipBack, SkipForward, Download } from "lucide-react";
+import { ArrowLeft, Circle, Square, Pause, Play, Loader2, Mic, Gauge, Settings2, Upload, RotateCcw, Check, Minus, Plus, Music, Volume2, VolumeX, SkipBack, SkipForward, Download, ZoomIn, ZoomOut } from "lucide-react";
 import { toast } from "sonner";
 
 type Phase = "setup" | "countdown" | "recording" | "review";
@@ -65,6 +65,7 @@ const Record = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const previewRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const videoTrackRef = useRef<MediaStreamTrack | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const [isRecording, setIsRecording] = useState(false);
@@ -75,6 +76,20 @@ const Record = () => {
   const startTimeRef = useRef(0);
   const [reviewTitle, setReviewTitle] = useState("");
   const [uploading, setUploading] = useState(false);
+
+  // Camera zoom (native via MediaTrack constraints when supported, CSS fallback otherwise)
+  const [zoom, setZoom] = useState<number>(() => {
+    const saved = typeof window !== "undefined" ? window.localStorage.getItem("teleprompter:lastZoom") : null;
+    const n = saved ? parseFloat(saved) : 1;
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  });
+  const [zoomRange, setZoomRange] = useState<{ min: number; max: number; step: number; native: boolean }>({
+    min: 0.6,
+    max: 3,
+    step: 0.1,
+    native: false,
+  });
+  const [showZoom, setShowZoom] = useState(false);
 
   // Teleprompter scroll
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -155,12 +170,36 @@ const Record = () => {
   const initCamera = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: {
+          facingMode: "user",
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
         audio: true,
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+      }
+
+      // Detect zoom capabilities on the video track
+      const videoTrack = stream.getVideoTracks()[0] ?? null;
+      videoTrackRef.current = videoTrack;
+      if (videoTrack && typeof (videoTrack as any).getCapabilities === "function") {
+        const caps: any = (videoTrack as any).getCapabilities();
+        if (caps && typeof caps.zoom === "object" && caps.zoom !== null) {
+          const min = Number(caps.zoom.min ?? 1);
+          const max = Number(caps.zoom.max ?? 3);
+          const step = Number(caps.zoom.step ?? 0.1) || 0.1;
+          setZoomRange({ min, max, step, native: true });
+          // Start at min (widest angle) for the most environment in frame
+          try {
+            await (videoTrack as any).applyConstraints({ advanced: [{ zoom: min }] });
+            setZoom(min);
+          } catch {}
+        } else {
+          setZoomRange({ min: 0.6, max: 3, step: 0.1, native: false });
+        }
       }
     } catch (err) {
       toast.error("Não foi possível acessar a câmera/microfone");
@@ -177,6 +216,16 @@ const Record = () => {
       try { audioCtxRef.current?.close(); } catch {}
     };
   }, [initCamera]);
+
+  // Apply zoom (native track constraint when available; CSS fallback otherwise)
+  useEffect(() => {
+    window.localStorage.setItem("teleprompter:lastZoom", String(zoom));
+    if (zoomRange.native && videoTrackRef.current) {
+      try {
+        (videoTrackRef.current as any).applyConstraints({ advanced: [{ zoom }] }).catch(() => {});
+      } catch {}
+    }
+  }, [zoom, zoomRange.native]);
 
   // Manual scroll loop (px per second based on current WPM and font size).
   // Reads from refs so slider changes apply live during recording.
@@ -575,8 +624,88 @@ const Record = () => {
         autoPlay
         playsInline
         muted
-        className={`absolute inset-0 w-full h-full object-cover ${settings?.mirror ? "" : "scale-x-[-1]"}`}
+        className={`absolute inset-0 w-full h-full ${zoom < 1 ? "object-contain bg-black" : "object-cover"} ${settings?.mirror ? "" : "scale-x-[-1]"}`}
+        style={
+          zoomRange.native
+            ? undefined
+            : {
+                transform: `${settings?.mirror ? "" : "scaleX(-1) "}scale(${zoom})`,
+                transformOrigin: "center center",
+                transition: "transform 120ms ease-out",
+              }
+        }
       />
+
+      {/* Floating zoom control (visible during setup, countdown and recording) */}
+      {phase !== "review" && (
+        <div className="absolute top-4 right-4 z-30 flex flex-col items-end gap-2">
+          <Button
+            size="icon"
+            variant="secondary"
+            className="bg-black/60 text-white hover:bg-black/80 backdrop-blur"
+            onClick={() => setShowZoom((s) => !s)}
+            title="Zoom da câmera"
+          >
+            <ZoomIn className="w-4 h-4" />
+          </Button>
+          {showZoom && (
+            <div className="bg-black/70 backdrop-blur rounded-lg p-3 w-56 flex flex-col gap-2 text-white shadow-lg">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium">Zoom</span>
+                <span className="tabular-nums">
+                  {zoom.toFixed(1)}x{zoomRange.native ? " · óptico" : ""}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 text-white hover:bg-white/10"
+                  onClick={() =>
+                    setZoom((z) => Math.max(zoomRange.min, +(z - zoomRange.step).toFixed(2)))
+                  }
+                  title="Diminuir zoom"
+                >
+                  <ZoomOut className="w-4 h-4" />
+                </Button>
+                <Slider
+                  min={zoomRange.min}
+                  max={zoomRange.max}
+                  step={zoomRange.step}
+                  value={[zoom]}
+                  onValueChange={(v) => setZoom(v[0])}
+                  className="flex-1"
+                />
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 text-white hover:bg-white/10"
+                  onClick={() =>
+                    setZoom((z) => Math.min(zoomRange.max, +(z + zoomRange.step).toFixed(2)))
+                  }
+                  title="Aumentar zoom"
+                >
+                  <ZoomIn className="w-4 h-4" />
+                </Button>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-white hover:bg-white/10 h-7 text-xs"
+                onClick={() => setZoom(zoomRange.native ? zoomRange.min : 1)}
+              >
+                <RotateCcw className="w-3 h-3 mr-1" />
+                Reset (mais amplo)
+              </Button>
+              {!zoomRange.native && (
+                <p className="text-[10px] text-white/60 leading-tight">
+                  Sua câmera não suporta zoom óptico — usando ajuste visual no preview.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Hidden audio element for background music */}
       {musicUrl && (
