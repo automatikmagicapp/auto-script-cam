@@ -74,6 +74,11 @@ const Record = () => {
   const recognitionRef = useRef<any>(null);
   const wordsRef = useRef<string[]>([]);
   const wordIndexRef = useRef(0);
+  // Live "ritmo" adjustment for voice mode: extra px/s drift on top of speech sync.
+  // Range -1..+1 (negative = slower/rewind drift, positive = faster/forward drift).
+  const [voiceBoost, setVoiceBoost] = useState(0);
+  const voiceBoostRef = useRef(0);
+  useEffect(() => { voiceBoostRef.current = voiceBoost; }, [voiceBoost]);
 
   // Load script + settings
   useEffect(() => {
@@ -205,6 +210,23 @@ const Record = () => {
     };
     recognitionRef.current = rec;
     try { rec.start(); } catch (e) { console.warn(e); }
+    // Start drift loop so the user can nudge the pace live with the slider/buttons.
+    lastTsRef.current = 0;
+    const driftTick = (ts: number) => {
+      if (!scrollRef.current) return;
+      if (lastTsRef.current === 0) lastTsRef.current = ts;
+      const dt = (ts - lastTsRef.current) / 1000;
+      lastTsRef.current = ts;
+      const boost = voiceBoostRef.current;
+      if (boost !== 0) {
+        // Same base formula as manual, scaled by boost (-1..+1) → up to ±1x of manual speed.
+        const pxPerSec = (wpmRef.current / 60) * (fontSizeRef.current * 0.18) * boost;
+        scrollPosRef.current = Math.max(0, scrollPosRef.current + pxPerSec * dt);
+        scrollRef.current.scrollTop = scrollPosRef.current;
+      }
+      rafRef.current = requestAnimationFrame(driftTick);
+    };
+    rafRef.current = requestAnimationFrame(driftTick);
   };
 
   const startCountdownAndRecord = () => {
