@@ -826,12 +826,21 @@ const Record = () => {
           }
         />
 
-        {/* Format badge */}
-        <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-white text-[11px] font-medium">
+        {/* Format badge — also toggles 9:16 <-> 16:9 when not recording */}
+        <button
+          type="button"
+          onClick={() => {
+            if (lockedOrientation) return; // locked during recording
+            setOrientation((o) => (o === "portrait" ? "landscape" : "portrait"));
+          }}
+          disabled={!!lockedOrientation}
+          className="absolute top-3 left-3 z-30 flex items-center gap-1.5 bg-black/60 hover:bg-black/80 disabled:opacity-80 disabled:cursor-not-allowed backdrop-blur px-2.5 py-1 rounded-full text-white text-[11px] font-medium transition-colors"
+          title={lockedOrientation ? "Formato travado durante a gravação" : "Tocar para alternar entre 9:16 Stories e 16:9"}
+        >
           <Smartphone className="w-3 h-3" />
           <span>{activeOrientation === "portrait" ? "9:16 Stories" : "16:9"}</span>
           {lockedOrientation && <Lock className="w-3 h-3 ml-0.5 opacity-70" />}
-        </div>
+        </button>
 
       {/* Floating zoom control (visible during setup, countdown and recording) */}
       {phase !== "review" && (
