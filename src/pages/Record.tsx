@@ -820,19 +820,21 @@ const Record = () => {
           {lockedOrientation && <Lock className="w-3 h-3 ml-0.5 opacity-70" />}
         </div>
 
-        {/* In-stage overlays are rendered below as siblings */}
-        {STAGE_CHILDREN}
-      </div>
-    </div>
-  );
-};
-
-// (placeholder block, replaced below)
-const _unused_marker = null;
-
       {/* Floating zoom control (visible during setup, countdown and recording) */}
       {phase !== "review" && (
         <div className="absolute top-4 right-4 z-30 flex flex-col items-end gap-2">
+          {hasMultipleCameras && (
+            <Button
+              size="icon"
+              variant="secondary"
+              className="bg-black/60 text-white hover:bg-black/80 backdrop-blur"
+              onClick={switchCamera}
+              disabled={switchingCamera}
+              title={facing === "user" ? "Trocar para câmera traseira" : "Trocar para câmera frontal"}
+            >
+              {switchingCamera ? <Loader2 className="w-4 h-4 animate-spin" /> : <SwitchCamera className="w-4 h-4" />}
+            </Button>
+          )}
           <Button
             size="icon"
             variant="secondary"
@@ -1173,6 +1175,7 @@ const _unused_marker = null;
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };
