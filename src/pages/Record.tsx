@@ -74,6 +74,11 @@ const Record = () => {
   const recognitionRef = useRef<any>(null);
   const wordsRef = useRef<string[]>([]);
   const wordIndexRef = useRef(0);
+  // Live "ritmo" adjustment for voice mode: extra px/s drift on top of speech sync.
+  // Range -1..+1 (negative = slower/rewind drift, positive = faster/forward drift).
+  const [voiceBoost, setVoiceBoost] = useState(0);
+  const voiceBoostRef = useRef(0);
+  useEffect(() => { voiceBoostRef.current = voiceBoost; }, [voiceBoost]);
 
   // Load script + settings
   useEffect(() => {
@@ -205,6 +210,23 @@ const Record = () => {
     };
     recognitionRef.current = rec;
     try { rec.start(); } catch (e) { console.warn(e); }
+    // Start drift loop so the user can nudge the pace live with the slider/buttons.
+    lastTsRef.current = 0;
+    const driftTick = (ts: number) => {
+      if (!scrollRef.current) return;
+      if (lastTsRef.current === 0) lastTsRef.current = ts;
+      const dt = (ts - lastTsRef.current) / 1000;
+      lastTsRef.current = ts;
+      const boost = voiceBoostRef.current;
+      if (boost !== 0) {
+        // Same base formula as manual, scaled by boost (-1..+1) → up to ±1x of manual speed.
+        const pxPerSec = (wpmRef.current / 60) * (fontSizeRef.current * 0.18) * boost;
+        scrollPosRef.current = Math.max(0, scrollPosRef.current + pxPerSec * dt);
+        scrollRef.current.scrollTop = scrollPosRef.current;
+      }
+      rafRef.current = requestAnimationFrame(driftTick);
+    };
+    rafRef.current = requestAnimationFrame(driftTick);
   };
 
   const startCountdownAndRecord = () => {
@@ -441,7 +463,7 @@ const Record = () => {
             </div>
           )}
 
-          {/* Live speed control during recording (manual mode only) */}
+          {/* Live speed control during recording — manual mode */}
           {phase === "recording" && mode === "manual" && (
             <div className="absolute top-4 right-4 z-20 bg-black/70 backdrop-blur rounded-2xl p-3 w-64 space-y-2 border border-white/10">
               <div className="flex items-center justify-between text-white text-xs">
@@ -455,6 +477,51 @@ const Record = () => {
                 </Button>
                 <Button size="sm" variant="secondary" className="flex-1 h-8" onClick={() => updateWpm(wpm + 10)}>
                   <Plus className="w-3 h-3 mr-1" />10
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Live pace control during recording — voice mode */}
+          {phase === "recording" && mode === "voice" && (
+            <div className="absolute top-4 right-4 z-20 bg-black/70 backdrop-blur rounded-2xl p-3 w-64 space-y-2 border border-white/10">
+              <div className="flex items-center justify-between text-white text-xs">
+                <span className="opacity-70">Ritmo (voz)</span>
+                <span className="font-mono">
+                  {voiceBoost === 0 ? "sincronizado" : `${voiceBoost > 0 ? "+" : ""}${Math.round(voiceBoost * 100)}%`}
+                </span>
+              </div>
+              <Slider
+                value={[voiceBoost * 100]}
+                min={-100}
+                max={100}
+                step={5}
+                onValueChange={(v) => setVoiceBoost(v[0] / 100)}
+              />
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="flex-1 h-8"
+                  onClick={() => setVoiceBoost(Math.max(-1, +(voiceBoost - 0.1).toFixed(2)))}
+                >
+                  <Minus className="w-3 h-3 mr-1" />Lento
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="flex-1 h-8"
+                  onClick={() => setVoiceBoost(0)}
+                >
+                  0
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="flex-1 h-8"
+                  onClick={() => setVoiceBoost(Math.min(1, +(voiceBoost + 0.1).toFixed(2)))}
+                >
+                  <Plus className="w-3 h-3 mr-1" />Rápido
                 </Button>
               </div>
             </div>
