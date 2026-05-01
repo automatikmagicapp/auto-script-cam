@@ -1,61 +1,102 @@
-# Corrigir velocidade do teleprompter
 
-## O problema
+# Música de fundo nos roteiros
 
-Encontrei **dois bugs** que impedem você de aumentar a velocidade da rolagem do texto:
+## O que você vai ter
 
-### 1. A velocidade "congela" quando a gravação começa (bug principal)
+Em cada roteiro você poderá **anexar um arquivo MP3** (escolhido do seu computador/celular). A música fica salva junto com o roteiro. Na tela do editor você define:
 
-No arquivo `src/pages/Record.tsx`, a função `startManualScroll()` usa o valor de `wpm` **no momento em que é chamada**. Como ela roda dentro de um `requestAnimationFrame` em loop, o valor de `wpm` fica preso (closure) no número que existia quando a gravação começou. Mesmo se você mexer no slider depois, o loop continua usando o valor antigo.
+- Se a música **começa tocando automaticamente** ao iniciar a gravação (sim/não)
+- O **volume inicial** (0–100%)
+- **Auto-fade in** ao iniciar e **fade out** ao parar (opcional)
+- **Loop** (recomeça ao terminar)
+- Ponto de início ("começar aos X segundos") — útil pra pular intro
 
-O mesmo vale para `fontSize` — mudanças durante a gravação não são aplicadas.
+Durante a gravação, um **mini-player flutuante** (canto da tela, igual ao painel de velocidade já existente) com:
 
-### 2. O limite máximo é baixo demais
+- ▶ Play / ⏸ Pause
+- ⏮ Voltar 10s / ⏭ Avançar 10s
+- Slider de **posição** (timeline) — arrastar pra qualquer momento
+- Slider de **volume** ao vivo
+- Botão **mute** rápido
+- Tempo atual / duração total
 
-O slider de velocidade vai só até **250 palavras/min**. Para uma leitura realmente rápida, isso é pouco. Além disso, a fórmula de conversão (`wpm / 60 / 7 * fontSize * 1.4`) é conservadora — com fonte 42px e 250 wpm dá ~35 px/s, que visualmente parece lento.
+## Funções extras que recomendo (essenciais)
 
-### 3. Painel de ajustes some durante a gravação
+1. **Mixagem no vídeo final**: a música toca no celular durante a gravação, mas o microfone do vídeo só capta sua voz. Vou misturar a música **dentro do arquivo de vídeo gravado** (usando Web Audio API + MediaRecorder) para que ao reproduzir/baixar a gravação a música apareça junto, sincronizada com seus controles.
+2. **Ducking automático** (opcional, ligado por padrão): quando o reconhecimento de voz detectar que você está falando, a música abaixa automaticamente ~50% e volta ao normal nas pausas. Deixa a fala sempre clara.
+3. **Pré-visualização no editor**: um mini-player no editor de roteiro pra você ouvir a música antes de gravar e ajustar volume inicial com referência real.
+4. **Substituir/remover** o MP3 a qualquer momento.
+5. **Aviso de tamanho**: limite de 15 MB por música (suficiente pra ~15 min em qualidade boa) pra não pesar no upload.
 
-O painel de configurações (engrenagem) só aparece na fase `setup`. Não dá para ajustar velocidade no meio da gravação para acelerar/desacelerar conforme você lê.
-
-## O que vou mudar
-
-### A. Corrigir a closure travada
-Usar `useRef` para `wpm` e `fontSize` (ex.: `wpmRef.current`) e ler dentro do loop `requestAnimationFrame`. Assim, qualquer mudança no slider passa a valer **imediatamente**, mesmo durante a gravação.
-
-### B. Aumentar o alcance do slider
-- Mínimo: 80 → **60** wpm
-- Máximo: 250 → **500** wpm
-- Passo: 5 (mantido)
-
-### C. Adicionar multiplicador de velocidade visual
-Incluir um fator `speedMultiplier` (1.0× a 3.0×) na fórmula de pixels/segundo, para que o usuário consiga acelerar bastante mesmo em fontes grandes. Apresentado como um slider extra "Velocidade fina" ou substituindo a fórmula por algo mais direto:
+## Como vai ficar (telas)
 
 ```text
-pxPerSec = (wpm / 60) * (fontSize * 0.18) * speedMultiplier
+┌─ Editor de Roteiro ──────────────────────┐
+│ Título: [____________________]           │
+│ Texto:  [_____________________________]  │
+│         [_____________________________]  │
+│                                          │
+│ ── 🎵 Música de fundo ──────────────     │
+│ [+ Adicionar MP3]   ou   nome.mp3  [x]  │
+│ ▶ ━━━●━━━━━━━━━ 0:42 / 3:15  🔊━●━━     │
+│ ☑ Tocar automaticamente ao gravar       │
+│ ☑ Loop    ☑ Ducking (abaixa na fala)    │
+│ Volume inicial:  ━━━●━━━ 60%             │
+│ Começar aos: [0] segundos                │
+│ ── Fade in: 2s   Fade out: 2s ──         │
+│                                          │
+│ [Gravar agora]                           │
+└──────────────────────────────────────────┘
 ```
 
-Essa fórmula responde melhor: dobrar o wpm dobra a velocidade real na tela.
+Durante a gravação (canto inferior direito):
 
-### D. Mostrar controles de velocidade DURANTE a gravação
-Adicionar um mini-painel flutuante (canto da tela) na fase `recording` com:
-- Slider de velocidade (wpm)
-- Botões rápidos: **−** / **+** (ajuste de ±10 wpm)
-- Visível só no modo manual
+```text
+┌─ 🎵 música.mp3 ─────────┐
+│ ▶  ⏮10  ⏭10   🔊 ━●━   │
+│ ━━━━●━━━━━━ 1:23/3:15  │
+└─────────────────────────┘
+```
 
-Assim você acelera/desacelera ao vivo sem parar a gravação.
+## Detalhes técnicos
 
-### E. Persistir a preferência
-Quando o usuário ajustar a velocidade, salvar em `user_settings.wpm` para que da próxima vez já abra com o valor preferido.
+### Banco de dados
+- Nova coluna em `scripts`: `music_path` (texto, caminho no storage), `music_filename` (texto), `music_autoplay` (bool, default false), `music_volume` (numérico 0–1, default 0.6), `music_loop` (bool, default true), `music_start_seconds` (int, default 0), `music_ducking` (bool, default true), `music_fade_in` (int, default 2), `music_fade_out` (int, default 2)
+- Novo bucket de storage **privado** `script-music` com políticas RLS por `user_id` (igual ao bucket `recordings`)
+- Migração inclui: add columns, criar bucket, policies de SELECT/INSERT/UPDATE/DELETE só para o dono
+
+### Upload
+- Em `ScriptEditor.tsx`: input `<input type="file" accept="audio/mpeg,audio/mp3">`, valida tamanho ≤ 15 MB, faz upload pra `script-music/{user_id}/{script_id}.mp3`, salva caminho em `scripts.music_path`
+- Botão remover: deleta do storage e limpa colunas
+
+### Player no editor
+- Componente `<MusicPanel>` reutilizável: gera signed URL, monta `<audio>` HTML5 nativo, controles básicos
+- Salva mudanças de configuração (autoplay/volume/loop/etc) com debounce na tabela `scripts`
+
+### Player na gravação (`Record.tsx`)
+- Carrega música via signed URL no `beginRecording()`
+- Cria `AudioContext` + `MediaElementAudioSourceNode` do `<audio>` + `GainNode` (controle de volume) + `MediaStreamDestination`
+- Mistura: pega `streamRef.current` (vídeo+mic) + saída do `MediaStreamDestination` (música) num único stream usando `new MediaStream([...videoTracks, ...micTracks, ...musicTracks])` — na prática combina mic + música num único `AudioContext` antes de gravar
+- `MediaRecorder` grava o stream combinado → música fica embutida no `.webm` final
+- Ducking: hook no `recognitionRef.onresult`, quando há fala recente, baixa `gainNode.gain` para 0.5×; depois de 800 ms sem fala volta pro volume cheio (rampa suave com `setTargetAtTime`)
+- Mini-painel flutuante: estado local `musicTime`, `musicVolume`, `musicPlaying`; botões manipulam o `<audio>` element diretamente
+
+### Compatibilidade
+- iOS Safari exige interação do usuário pra `AudioContext.resume()` — já temos o clique em "Iniciar gravação", então OK
+- Se o navegador não suportar Web Audio API (raro), música toca em paralelo mas não fica embutida no vídeo (mostra aviso)
 
 ## Arquivos afetados
 
-- `src/pages/Record.tsx` — refs para wpm/fontSize, novo slider range, controles em runtime, salvar preferência
+- `supabase/migrations/...sql` (novo) — colunas em `scripts`, bucket `script-music`, RLS
+- `src/pages/ScriptEditor.tsx` — UI de upload e configuração da música
+- `src/pages/Record.tsx` — carregar música, mixar no MediaRecorder, mini-player flutuante, ducking
+- `src/components/MusicPanel.tsx` (novo) — componente reutilizável do player
+- `src/integrations/supabase/types.ts` — atualizado automaticamente pela migração
 
 ## O que NÃO muda
 
-- Modo "Por voz" (continua sincronizando pela fala)
-- Layout geral, cores, fluxo de gravação
-- Backend / banco de dados (apenas um UPDATE em `user_settings` ao mudar wpm)
+- Reconhecimento de voz, velocidade, fluxo geral de gravação
+- Gravações antigas continuam funcionando normalmente (música é opcional)
+- Layout do app
 
-Após sua aprovação, implemento as mudanças.
+Após sua aprovação, implemento tudo de uma vez.
