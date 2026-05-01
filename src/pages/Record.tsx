@@ -279,20 +279,10 @@ const Record = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orientation]);
 
-  // Track viewport orientation (only updates `orientation` when not locked).
-  useEffect(() => {
-    const update = () => {
-      const isLandscape = window.matchMedia("(orientation: landscape)").matches;
-      setOrientation(isLandscape ? "landscape" : "portrait");
-    };
-    update();
-    window.addEventListener("resize", update);
-    window.addEventListener("orientationchange", update);
-    return () => {
-      window.removeEventListener("resize", update);
-      window.removeEventListener("orientationchange", update);
-    };
-  }, []);
+  // Note: we deliberately do NOT listen to device `orientationchange` to
+  // change the recording format. The format (9:16 / 16:9) is controlled
+  // explicitly by the user via the badge toggle so accidentally rotating
+  // the phone never produces a half-vertical / half-horizontal file.
 
   // Switch between front (user) and back (environment) camera.
   const switchCamera = async () => {
