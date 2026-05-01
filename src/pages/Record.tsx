@@ -94,11 +94,10 @@ const Record = () => {
   const [showZoom, setShowZoom] = useState(false);
 
   // ===== Stories 9:16 stage + camera facing + canvas composition =====
-  const [orientation, setOrientation] = useState<Orientation>(() =>
-    typeof window !== "undefined" && window.matchMedia("(orientation: landscape)").matches
-      ? "landscape"
-      : "portrait",
-  );
+  // Default is ALWAYS 9:16 Stories (main mode). User toggles to 16:9 manually
+  // via the format badge button. We never auto-flip based on the device's
+  // physical orientation — that would surprise the user mid-setup.
+  const [orientation, setOrientation] = useState<Orientation>("portrait");
   // When recording starts we lock the orientation chosen at that moment.
   const [lockedOrientation, setLockedOrientation] = useState<Orientation | null>(null);
   const activeOrientation: Orientation = lockedOrientation ?? orientation;
