@@ -7,7 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Circle, Square, Pause, Play, Loader2, Mic, Gauge, Settings2, Upload, RotateCcw, Check, Minus, Plus, Music, Volume2, VolumeX, SkipBack, SkipForward } from "lucide-react";
+import { ArrowLeft, Circle, Square, Pause, Play, Loader2, Mic, Gauge, Settings2, Upload, RotateCcw, Check, Minus, Plus, Music, Volume2, VolumeX, SkipBack, SkipForward, Download } from "lucide-react";
 import { toast } from "sonner";
 
 type Phase = "setup" | "countdown" | "recording" | "review";
@@ -361,17 +361,53 @@ const Record = () => {
     const id = window.setInterval(() => {
       if (musicMuted) return;
       const since = performance.now() - lastSpeechRef.current;
-      const speaking = since < 800;
+      const speaking = since < 1200;
       if (speaking && !duckingActiveRef.current) {
         duckingActiveRef.current = true;
-        setMusicGain(targetVolRef.current * 0.4, 0.1);
+        // Fast attack when speech starts
+        setMusicGain(targetVolRef.current * 0.4, 0.08);
       } else if (!speaking && duckingActiveRef.current) {
         duckingActiveRef.current = false;
-        setMusicGain(targetVolRef.current, 0.3);
+        // Slow, smooth release back to full volume (avoids pumping on pauses)
+        setMusicGain(targetVolRef.current, 0.6);
       }
     }, 150);
     return () => window.clearInterval(id);
   }, [phase, music?.music_ducking, musicMuted]);
+
+  // Silent speech detector for ducking in MANUAL mode
+  // (in voice mode, the main recognizer already updates lastSpeechRef).
+  const duckRecRef = useRef<any>(null);
+  useEffect(() => {
+    if (phase !== "recording") return;
+    if (!music?.music_ducking) return;
+    if (mode !== "manual") return;
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) return;
+    const rec = new SR();
+    rec.lang = "pt-BR";
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.onresult = (e: any) => {
+      // Any result = user is speaking; just stamp the ref.
+      let hasText = false;
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i][0].transcript.trim()) { hasText = true; break; }
+      }
+      if (hasText) lastSpeechRef.current = performance.now();
+    };
+    rec.onerror = () => {};
+    rec.onend = () => {
+      // Auto-restart while still recording
+      if (phase === "recording") { try { rec.start(); } catch {} }
+    };
+    try { rec.start(); } catch {}
+    duckRecRef.current = rec;
+    return () => {
+      try { rec.stop(); } catch {}
+      duckRecRef.current = null;
+    };
+  }, [phase, music?.music_ducking, mode]);
 
   // Music transport controls (live during recording)
   const toggleMusic = () => {
@@ -500,7 +536,8 @@ const Record = () => {
     if (!recordedUrl) return;
     const a = document.createElement("a");
     a.href = recordedUrl;
-    a.download = `${reviewTitle || "gravacao"}.webm`;
+    const safeName = (reviewTitle || "gravacao").replace(/[^\p{L}\p{N}_-]+/gu, "_");
+    a.download = `${safeName}.webm`;
     a.click();
   };
 
@@ -790,9 +827,14 @@ const Record = () => {
             <video ref={previewRef} src={recordedUrl} controls className="w-full rounded-lg bg-black" />
             <Input value={reviewTitle} onChange={(e) => setReviewTitle(e.target.value)} placeholder="Título da gravação" />
             <p className="text-sm text-muted-foreground">Duração: {Math.round(duration)}s</p>
+            {music && (
+              <p className="text-xs text-muted-foreground -mt-2">
+                O vídeo baixado já inclui a música mixada.
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-3">
-              <Button variant="outline" onClick={downloadLocal}>
-                <Upload className="w-4 h-4 mr-2 rotate-180" />Baixar
+              <Button variant={music ? "default" : "outline"} onClick={downloadLocal}>
+                <Download className="w-4 h-4 mr-2" />Baixar vídeo
               </Button>
               <Button onClick={uploadToCloud} disabled={uploading}>
                 {uploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
