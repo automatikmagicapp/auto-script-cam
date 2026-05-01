@@ -7,7 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Circle, Square, Pause, Play, Loader2, Mic, Gauge, Settings2, Upload, RotateCcw, Check, Minus, Plus } from "lucide-react";
+import { ArrowLeft, Circle, Square, Pause, Play, Loader2, Mic, Gauge, Settings2, Upload, RotateCcw, Check, Minus, Plus, Music, Volume2, VolumeX, SkipBack, SkipForward } from "lucide-react";
 import { toast } from "sonner";
 
 type Phase = "setup" | "countdown" | "recording" | "review";
@@ -23,6 +23,18 @@ interface UserSettings {
   default_mode: string;
   mirror: boolean;
   countdown_seconds: number;
+}
+
+interface ScriptMusic {
+  music_path: string | null;
+  music_filename: string | null;
+  music_autoplay: boolean;
+  music_volume: number;
+  music_loop: boolean;
+  music_start_seconds: number;
+  music_ducking: boolean;
+  music_fade_in: number;
+  music_fade_out: number;
 }
 
 const Record = () => {
@@ -80,6 +92,22 @@ const Record = () => {
   const voiceBoostRef = useRef(0);
   useEffect(() => { voiceBoostRef.current = voiceBoost; }, [voiceBoost]);
 
+  // ========== Background music ==========
+  const [music, setMusic] = useState<ScriptMusic | null>(null);
+  const [musicUrl, setMusicUrl] = useState<string | null>(null);
+  const musicAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const musicGainRef = useRef<GainNode | null>(null);
+  const musicDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const targetVolRef = useRef(0.6);
+  const lastSpeechRef = useRef(0);
+  const duckingActiveRef = useRef(false);
+  const [musicPlaying, setMusicPlaying] = useState(false);
+  const [musicTime, setMusicTime] = useState(0);
+  const [musicDuration, setMusicDuration] = useState(0);
+  const [musicVolume, setMusicVolume] = useState(0.6);
+  const [musicMuted, setMusicMuted] = useState(false);
+
   // Load script + settings
   useEffect(() => {
     if (!user) return;
@@ -92,6 +120,26 @@ const Record = () => {
         setScriptTitle(s.data.title);
         setScriptContent(s.data.content);
         setReviewTitle(s.data.title);
+        if (s.data.music_path) {
+          const m: ScriptMusic = {
+            music_path: s.data.music_path,
+            music_filename: s.data.music_filename,
+            music_autoplay: s.data.music_autoplay,
+            music_volume: Number(s.data.music_volume),
+            music_loop: s.data.music_loop,
+            music_start_seconds: s.data.music_start_seconds,
+            music_ducking: s.data.music_ducking,
+            music_fade_in: s.data.music_fade_in,
+            music_fade_out: s.data.music_fade_out,
+          };
+          setMusic(m);
+          setMusicVolume(m.music_volume);
+          targetVolRef.current = m.music_volume;
+          const { data: signed } = await supabase.storage
+            .from("script-music")
+            .createSignedUrl(m.music_path!, 3600);
+          if (signed?.signedUrl) setMusicUrl(signed.signedUrl);
+        }
       }
       if (st.data) {
         setSettings(st.data as UserSettings);
@@ -126,6 +174,7 @@ const Record = () => {
       streamRef.current?.getTracks().forEach((t) => t.stop());
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       recognitionRef.current?.stop?.();
+      try { audioCtxRef.current?.close(); } catch {}
     };
   }, [initCamera]);
 
@@ -182,6 +231,8 @@ const Record = () => {
         transcript += e.results[i][0].transcript + " ";
       }
       const spoken = transcript.toLowerCase().split(/\s+/).filter(Boolean);
+      // Ducking: mark recent speech for music gain reduction
+      if (spoken.length > 0) lastSpeechRef.current = performance.now();
       // Greedy match: advance index for each spoken word that matches near current position
       for (const w of spoken) {
         const cleanW = w.replace(/[^\p{L}\p{N}]/gu, "");
@@ -229,6 +280,139 @@ const Record = () => {
     rafRef.current = requestAnimationFrame(driftTick);
   };
 
+  // ========== Music helpers ==========
+  const setMusicGain = (v: number, ramp = 0.15) => {
+    if (!musicGainRef.current || !audioCtxRef.current) return;
+    const ctx = audioCtxRef.current;
+    musicGainRef.current.gain.cancelScheduledValues(ctx.currentTime);
+    musicGainRef.current.gain.setTargetAtTime(v, ctx.currentTime, ramp);
+  };
+
+  // Build the combined recording stream: camera+mic from getUserMedia
+  // plus music routed through Web Audio so it ends up inside the saved video.
+  const buildRecordingStream = async (): Promise<MediaStream> => {
+    const camStream = streamRef.current!;
+    if (!music || !musicUrl || !musicAudioRef.current) return camStream;
+
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioCtxRef.current = ctx;
+      await ctx.resume();
+
+      // Music graph
+      const musicSource = ctx.createMediaElementSource(musicAudioRef.current);
+      const musicGain = ctx.createGain();
+      musicGain.gain.value = 0; // start silent, fade in
+      musicGainRef.current = musicGain;
+      const dest = ctx.createMediaStreamDestination();
+      musicDestRef.current = dest;
+      // Route music to both the recording destination AND the speakers
+      musicSource.connect(musicGain);
+      musicGain.connect(dest);
+      musicGain.connect(ctx.destination);
+
+      // Mic graph (route mic into the same destination so the recording has both)
+      const micStream = new MediaStream(camStream.getAudioTracks());
+      const micSource = ctx.createMediaStreamSource(micStream);
+      micSource.connect(dest);
+
+      // Combine video tracks from camera + mixed audio track from destination
+      const combined = new MediaStream([
+        ...camStream.getVideoTracks(),
+        ...dest.stream.getAudioTracks(),
+      ]);
+      return combined;
+    } catch (err) {
+      console.warn("Music mix failed, recording without music in video:", err);
+      return camStream;
+    }
+  };
+
+  const startMusicPlayback = async () => {
+    if (!music || !musicAudioRef.current) return;
+    const a = musicAudioRef.current;
+    try {
+      a.currentTime = music.music_start_seconds || 0;
+      a.loop = music.music_loop;
+      targetVolRef.current = music.music_volume;
+      setMusicVolume(music.music_volume);
+      await a.play();
+      // Fade in
+      const fadeIn = Math.max(0, music.music_fade_in);
+      setMusicGain(0, 0.001);
+      setTimeout(() => setMusicGain(music.music_volume, fadeIn > 0 ? fadeIn / 3 : 0.05), 50);
+    } catch (e) {
+      console.warn("Music autoplay failed:", e);
+    }
+  };
+
+  const stopMusicPlayback = () => {
+    if (!musicAudioRef.current) return;
+    const fadeOut = music?.music_fade_out ?? 0;
+    setMusicGain(0, fadeOut > 0 ? fadeOut / 3 : 0.05);
+    setTimeout(() => {
+      musicAudioRef.current?.pause();
+    }, Math.max(100, fadeOut * 1000));
+  };
+
+  // Ducking watcher
+  useEffect(() => {
+    if (phase !== "recording" || !music?.music_ducking) return;
+    const id = window.setInterval(() => {
+      if (musicMuted) return;
+      const since = performance.now() - lastSpeechRef.current;
+      const speaking = since < 800;
+      if (speaking && !duckingActiveRef.current) {
+        duckingActiveRef.current = true;
+        setMusicGain(targetVolRef.current * 0.4, 0.1);
+      } else if (!speaking && duckingActiveRef.current) {
+        duckingActiveRef.current = false;
+        setMusicGain(targetVolRef.current, 0.3);
+      }
+    }, 150);
+    return () => window.clearInterval(id);
+  }, [phase, music?.music_ducking, musicMuted]);
+
+  // Music transport controls (live during recording)
+  const toggleMusic = () => {
+    const a = musicAudioRef.current;
+    if (!a) return;
+    if (a.paused) {
+      a.play().catch(() => {});
+      setMusicGain(musicMuted ? 0 : targetVolRef.current, 0.2);
+    } else {
+      a.pause();
+    }
+  };
+  const seekMusic = (s: number) => {
+    if (musicAudioRef.current) musicAudioRef.current.currentTime = s;
+  };
+  const nudgeMusic = (delta: number) => {
+    if (musicAudioRef.current) {
+      musicAudioRef.current.currentTime = Math.max(
+        0,
+        Math.min(musicDuration, musicAudioRef.current.currentTime + delta),
+      );
+    }
+  };
+  const changeMusicVolume = (v: number) => {
+    setMusicVolume(v);
+    targetVolRef.current = v;
+    if (!musicMuted) setMusicGain(v, 0.05);
+  };
+  const toggleMute = () => {
+    const next = !musicMuted;
+    setMusicMuted(next);
+    setMusicGain(next ? 0 : targetVolRef.current, 0.05);
+  };
+
+  const fmtTime = (s: number) => {
+    if (!isFinite(s) || s < 0) s = 0;
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  };
+
   const startCountdownAndRecord = () => {
     if (!streamRef.current) return toast.error("Câmera não disponível");
     if (!scriptContent.trim()) return toast.error("Roteiro vazio");
@@ -246,7 +430,7 @@ const Record = () => {
     }, 1000);
   };
 
-  const beginRecording = () => {
+  const beginRecording = async () => {
     if (!streamRef.current) return;
     chunksRef.current = [];
     const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
@@ -254,7 +438,8 @@ const Record = () => {
       : MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
       ? "video/webm;codecs=vp8,opus"
       : "video/webm";
-    const mr = new MediaRecorder(streamRef.current, { mimeType });
+    const recordingStream = await buildRecordingStream();
+    const mr = new MediaRecorder(recordingStream, { mimeType });
     mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
     mr.onstop = () => {
       const blob = new Blob(chunksRef.current, { type: mimeType });
@@ -264,6 +449,7 @@ const Record = () => {
       setPhase("review");
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       recognitionRef.current?.stop?.();
+      stopMusicPlayback();
     };
     mr.start(1000);
     recorderRef.current = mr;
@@ -275,6 +461,7 @@ const Record = () => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     if (mode === "voice") startVoiceMode();
     else startManualScroll();
+    if (music?.music_autoplay) startMusicPlayback();
   };
 
   const togglePause = () => {
@@ -282,11 +469,15 @@ const Record = () => {
     if (isPaused) {
       recorderRef.current.resume();
       if (mode === "voice") startVoiceMode(); else startManualScroll();
+      if (music && musicAudioRef.current && !musicAudioRef.current.ended) {
+        musicAudioRef.current.play().catch(() => {});
+      }
       setIsPaused(false);
     } else {
       recorderRef.current.pause();
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       recognitionRef.current?.stop?.();
+      musicAudioRef.current?.pause();
       setIsPaused(true);
     }
   };
