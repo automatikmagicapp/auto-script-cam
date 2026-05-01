@@ -784,24 +784,51 @@ const Record = () => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black overflow-hidden">
-      {/* Camera live */}
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted
-        className={`absolute inset-0 w-full h-full ${zoom < 1 ? "object-contain bg-black" : "object-cover"} ${settings?.mirror ? "" : "scale-x-[-1]"}`}
+    <div className="fixed inset-0 bg-black overflow-hidden flex items-center justify-center">
+      {/* 9:16 (portrait) or 16:9 (landscape) stage — what you see is what gets saved */}
+      <div
+        ref={stageRef}
+        className="relative bg-black overflow-hidden shadow-2xl"
         style={
-          zoomRange.native
-            ? undefined
-            : {
-                transform: `${settings?.mirror ? "" : "scaleX(-1) "}scale(${zoom})`,
-                transformOrigin: "center center",
-                transition: "transform 120ms ease-out",
-              }
+          activeOrientation === "portrait"
+            ? { aspectRatio: "9 / 16", height: "100vh", maxWidth: "100vw" }
+            : { aspectRatio: "16 / 9", width: "100vw", maxHeight: "100vh" }
         }
-      />
+      >
+        {/* Camera live */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className={`absolute inset-0 w-full h-full ${zoom < 1 ? "object-contain bg-black" : "object-cover"} ${facing === "user" && !settings?.mirror ? "scale-x-[-1]" : ""}`}
+          style={
+            zoomRange.native
+              ? undefined
+              : {
+                  transform: `${facing === "user" && !settings?.mirror ? "scaleX(-1) " : ""}scale(${zoom})`,
+                  transformOrigin: "center center",
+                  transition: "transform 120ms ease-out",
+                }
+          }
+        />
+
+        {/* Format badge */}
+        <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-white text-[11px] font-medium">
+          <Smartphone className="w-3 h-3" />
+          <span>{activeOrientation === "portrait" ? "9:16 Stories" : "16:9"}</span>
+          {lockedOrientation && <Lock className="w-3 h-3 ml-0.5 opacity-70" />}
+        </div>
+
+        {/* In-stage overlays are rendered below as siblings */}
+        {STAGE_CHILDREN}
+      </div>
+    </div>
+  );
+};
+
+// (placeholder block, replaced below)
+const _unused_marker = null;
 
       {/* Floating zoom control (visible during setup, countdown and recording) */}
       {phase !== "review" && (
