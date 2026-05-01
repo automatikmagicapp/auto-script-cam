@@ -7,11 +7,13 @@ import { Slider } from "@/components/ui/slider";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Circle, Square, Pause, Play, Loader2, Mic, Gauge, Settings2, Upload, RotateCcw, Check, Minus, Plus, Music, Volume2, VolumeX, SkipBack, SkipForward, Download, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowLeft, Circle, Square, Pause, Play, Loader2, Mic, Gauge, Settings2, Upload, RotateCcw, Check, Minus, Plus, Music, Volume2, VolumeX, SkipBack, SkipForward, Download, ZoomIn, ZoomOut, SwitchCamera, Smartphone, Lock } from "lucide-react";
 import { toast } from "sonner";
 
 type Phase = "setup" | "countdown" | "recording" | "review";
 type Mode = "manual" | "voice";
+type Orientation = "portrait" | "landscape";
+type Facing = "user" | "environment";
 
 interface UserSettings {
   font_size: number;
@@ -91,6 +93,30 @@ const Record = () => {
   });
   const [showZoom, setShowZoom] = useState(false);
 
+  // ===== Stories 9:16 stage + camera facing + canvas composition =====
+  const [orientation, setOrientation] = useState<Orientation>(() =>
+    typeof window !== "undefined" && window.matchMedia("(orientation: landscape)").matches
+      ? "landscape"
+      : "portrait",
+  );
+  // When recording starts we lock the orientation chosen at that moment.
+  const [lockedOrientation, setLockedOrientation] = useState<Orientation | null>(null);
+  const activeOrientation: Orientation = lockedOrientation ?? orientation;
+
+  const [facing, setFacing] = useState<Facing>(() => {
+    if (typeof window === "undefined") return "user";
+    const saved = window.localStorage.getItem("teleprompter:lastFacing");
+    return saved === "environment" ? "environment" : "user";
+  });
+  const [hasMultipleCameras, setHasMultipleCameras] = useState(false);
+  const [switchingCamera, setSwitchingCamera] = useState(false);
+
+  // Canvas composition for true 9:16 / 16:9 output
+  const stageRef = useRef<HTMLDivElement>(null);
+  const compositionCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const compositionRafRef = useRef<number | null>(null);
+  const compositionStreamRef = useRef<MediaStream | null>(null);
+
   // Teleprompter scroll
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollPosRef = useRef(0);
@@ -167,11 +193,14 @@ const Record = () => {
   }, [user, scriptId]);
 
   // Camera setup
-  const initCamera = useCallback(async () => {
+  const initCamera = useCallback(async (preferredFacing?: Facing) => {
     try {
+      const useFacing = preferredFacing ?? facing;
+      // Stop any existing stream first to release the device cleanly.
+      streamRef.current?.getTracks().forEach((t) => t.stop());
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: "user",
+          facingMode: { ideal: useFacing },
           width: { ideal: 1920 },
           height: { ideal: 1080 },
         },
@@ -201,21 +230,74 @@ const Record = () => {
           setZoomRange({ min: 0.6, max: 3, step: 0.1, native: false });
         }
       }
+
+      // Detect if there's more than one camera (front + back)
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter((d) => d.kind === "videoinput");
+        setHasMultipleCameras(cams.length > 1);
+      } catch {}
     } catch (err) {
       toast.error("Não foi possível acessar a câmera/microfone");
       console.error(err);
     }
-  }, []);
+  }, [facing]);
 
   useEffect(() => {
-    initCamera();
+    initCamera(facing);
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop());
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       recognitionRef.current?.stop?.();
       try { audioCtxRef.current?.close(); } catch {}
+      if (compositionRafRef.current) cancelAnimationFrame(compositionRafRef.current);
+      compositionStreamRef.current?.getTracks().forEach((t) => t.stop());
     };
-  }, [initCamera]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Track viewport orientation (only updates `orientation` when not locked).
+  useEffect(() => {
+    const update = () => {
+      const isLandscape = window.matchMedia("(orientation: landscape)").matches;
+      setOrientation(isLandscape ? "landscape" : "portrait");
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+    };
+  }, []);
+
+  // Switch between front (user) and back (environment) camera.
+  const switchCamera = async () => {
+    if (switchingCamera) return;
+    setSwitchingCamera(true);
+    const next: Facing = facing === "user" ? "environment" : "user";
+    const wasRecording = phase === "recording" && recorderRef.current && !isPaused;
+    try {
+      // If actively recording, pause first to keep the file consistent.
+      if (wasRecording) {
+        try { recorderRef.current?.pause(); } catch {}
+      }
+      await initCamera(next);
+      setFacing(next);
+      window.localStorage.setItem("teleprompter:lastFacing", next);
+      // Reset zoom to widest of the new camera
+      setZoom(zoomRange.native ? zoomRange.min : 1);
+      if (wasRecording) {
+        try { recorderRef.current?.resume(); } catch {}
+      }
+      toast.success(next === "user" ? "Câmera frontal" : "Câmera traseira");
+    } catch (e) {
+      console.error(e);
+      toast.error("Não foi possível trocar de câmera");
+    } finally {
+      setSwitchingCamera(false);
+    }
+  };
 
   // Apply zoom (native track constraint when available; CSS fallback otherwise)
   useEffect(() => {
@@ -339,41 +421,121 @@ const Record = () => {
 
   // Build the combined recording stream: camera+mic from getUserMedia
   // plus music routed through Web Audio so it ends up inside the saved video.
-  const buildRecordingStream = async (): Promise<MediaStream> => {
+  // The video track is composed from a canvas locked to 9:16 (portrait) or
+  // 16:9 (landscape), so the saved file matches what the user sees on stage.
+  const startCompositionLoop = (ori: Orientation): MediaStream | null => {
+    const camVideo = videoRef.current;
+    if (!camVideo) return null;
+    const W = ori === "portrait" ? 1080 : 1920;
+    const H = ori === "portrait" ? 1920 : 1080;
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    compositionCanvasRef.current = canvas;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    const mirror = facing === "user" && !settings?.mirror ? false : facing === "user" && settings?.mirror ? true : false;
+    // Note: the live <video> preview already mirrors the front camera visually.
+    // For the saved file we mirror the front camera too (matches user expectation).
+    const mirrorOutput = facing === "user";
+
+    const draw = () => {
+      if (!camVideo.videoWidth || !camVideo.videoHeight) {
+        compositionRafRef.current = requestAnimationFrame(draw);
+        return;
+      }
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, W, H);
+
+      // cover-fit crop centered, with optional CSS-zoom emulation
+      const z = zoomRange.native ? 1 : Math.max(0.6, zoom);
+      const srcW = camVideo.videoWidth;
+      const srcH = camVideo.videoHeight;
+      const targetAspect = W / H;
+      const srcAspect = srcW / srcH;
+      let cropW = srcW;
+      let cropH = srcH;
+      if (srcAspect > targetAspect) {
+        // source wider → crop sides
+        cropW = srcH * targetAspect;
+      } else {
+        // source taller → crop top/bottom
+        cropH = srcW / targetAspect;
+      }
+      // Apply zoom by shrinking the crop window (zoom in) or expanding (zoom out).
+      cropW = cropW / z;
+      cropH = cropH / z;
+      // Clamp to source bounds (zoom < 1 may exceed).
+      cropW = Math.min(cropW, srcW);
+      cropH = Math.min(cropH, srcH);
+      const sx = (srcW - cropW) / 2;
+      const sy = (srcH - cropH) / 2;
+
+      ctx.save();
+      if (mirrorOutput) {
+        ctx.translate(W, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(camVideo, sx, sy, cropW, cropH, 0, 0, W, H);
+      ctx.restore();
+
+      compositionRafRef.current = requestAnimationFrame(draw);
+    };
+    draw();
+
+    const stream = (canvas as any).captureStream(30) as MediaStream;
+    compositionStreamRef.current = stream;
+    return stream;
+  };
+
+  const stopCompositionLoop = () => {
+    if (compositionRafRef.current) {
+      cancelAnimationFrame(compositionRafRef.current);
+      compositionRafRef.current = null;
+    }
+    compositionStreamRef.current?.getTracks().forEach((t) => t.stop());
+    compositionStreamRef.current = null;
+    compositionCanvasRef.current = null;
+  };
+
+  const buildRecordingStream = async (ori: Orientation): Promise<MediaStream> => {
     const camStream = streamRef.current!;
-    if (!music || !musicUrl || !musicAudioRef.current) return camStream;
+    const composedVideo = startCompositionLoop(ori);
+    const videoTracks = composedVideo
+      ? composedVideo.getVideoTracks()
+      : camStream.getVideoTracks();
+
+    if (!music || !musicUrl || !musicAudioRef.current) {
+      return new MediaStream([...videoTracks, ...camStream.getAudioTracks()]);
+    }
 
     try {
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioCtxRef.current = ctx;
       await ctx.resume();
 
-      // Music graph
       const musicSource = ctx.createMediaElementSource(musicAudioRef.current);
       const musicGain = ctx.createGain();
-      musicGain.gain.value = 0; // start silent, fade in
+      musicGain.gain.value = 0;
       musicGainRef.current = musicGain;
       const dest = ctx.createMediaStreamDestination();
       musicDestRef.current = dest;
-      // Route music to both the recording destination AND the speakers
       musicSource.connect(musicGain);
       musicGain.connect(dest);
       musicGain.connect(ctx.destination);
 
-      // Mic graph (route mic into the same destination so the recording has both)
       const micStream = new MediaStream(camStream.getAudioTracks());
       const micSource = ctx.createMediaStreamSource(micStream);
       micSource.connect(dest);
 
-      // Combine video tracks from camera + mixed audio track from destination
-      const combined = new MediaStream([
-        ...camStream.getVideoTracks(),
+      return new MediaStream([
+        ...videoTracks,
         ...dest.stream.getAudioTracks(),
       ]);
-      return combined;
     } catch (err) {
       console.warn("Music mix failed, recording without music in video:", err);
-      return camStream;
+      return new MediaStream([...videoTracks, ...camStream.getAudioTracks()]);
     }
   };
 
@@ -501,6 +663,8 @@ const Record = () => {
   const startCountdownAndRecord = () => {
     if (!streamRef.current) return toast.error("Câmera não disponível");
     if (!scriptContent.trim()) return toast.error("Roteiro vazio");
+    // Lock orientation at the moment user hits record (default ON, as approved).
+    setLockedOrientation(orientation);
     const sec = settings?.countdown_seconds ?? 3;
     setPhase("countdown");
     setCountdown(sec);
@@ -523,7 +687,8 @@ const Record = () => {
       : MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
       ? "video/webm;codecs=vp8,opus"
       : "video/webm";
-    const recordingStream = await buildRecordingStream();
+    const ori = lockedOrientation ?? orientation;
+    const recordingStream = await buildRecordingStream(ori);
     const mr = new MediaRecorder(recordingStream, { mimeType });
     mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
     mr.onstop = () => {
@@ -535,6 +700,8 @@ const Record = () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       recognitionRef.current?.stop?.();
       stopMusicPlayback();
+      stopCompositionLoop();
+      setLockedOrientation(null);
     };
     mr.start(1000);
     recorderRef.current = mr;
@@ -617,28 +784,57 @@ const Record = () => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black overflow-hidden">
-      {/* Camera live */}
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted
-        className={`absolute inset-0 w-full h-full ${zoom < 1 ? "object-contain bg-black" : "object-cover"} ${settings?.mirror ? "" : "scale-x-[-1]"}`}
+    <div className="fixed inset-0 bg-black overflow-hidden flex items-center justify-center">
+      {/* 9:16 (portrait) or 16:9 (landscape) stage — what you see is what gets saved */}
+      <div
+        ref={stageRef}
+        className="relative bg-black overflow-hidden shadow-2xl"
         style={
-          zoomRange.native
-            ? undefined
-            : {
-                transform: `${settings?.mirror ? "" : "scaleX(-1) "}scale(${zoom})`,
-                transformOrigin: "center center",
-                transition: "transform 120ms ease-out",
-              }
+          activeOrientation === "portrait"
+            ? { aspectRatio: "9 / 16", height: "100vh", maxWidth: "100vw" }
+            : { aspectRatio: "16 / 9", width: "100vw", maxHeight: "100vh" }
         }
-      />
+      >
+        {/* Camera live */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className={`absolute inset-0 w-full h-full ${zoom < 1 ? "object-contain bg-black" : "object-cover"} ${facing === "user" && !settings?.mirror ? "scale-x-[-1]" : ""}`}
+          style={
+            zoomRange.native
+              ? undefined
+              : {
+                  transform: `${facing === "user" && !settings?.mirror ? "scaleX(-1) " : ""}scale(${zoom})`,
+                  transformOrigin: "center center",
+                  transition: "transform 120ms ease-out",
+                }
+          }
+        />
+
+        {/* Format badge */}
+        <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 bg-black/60 backdrop-blur px-2.5 py-1 rounded-full text-white text-[11px] font-medium">
+          <Smartphone className="w-3 h-3" />
+          <span>{activeOrientation === "portrait" ? "9:16 Stories" : "16:9"}</span>
+          {lockedOrientation && <Lock className="w-3 h-3 ml-0.5 opacity-70" />}
+        </div>
 
       {/* Floating zoom control (visible during setup, countdown and recording) */}
       {phase !== "review" && (
         <div className="absolute top-4 right-4 z-30 flex flex-col items-end gap-2">
+          {hasMultipleCameras && (
+            <Button
+              size="icon"
+              variant="secondary"
+              className="bg-black/60 text-white hover:bg-black/80 backdrop-blur"
+              onClick={switchCamera}
+              disabled={switchingCamera}
+              title={facing === "user" ? "Trocar para câmera traseira" : "Trocar para câmera frontal"}
+            >
+              {switchingCamera ? <Loader2 className="w-4 h-4 animate-spin" /> : <SwitchCamera className="w-4 h-4" />}
+            </Button>
+          )}
           <Button
             size="icon"
             variant="secondary"
@@ -979,6 +1175,7 @@ const Record = () => {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };
