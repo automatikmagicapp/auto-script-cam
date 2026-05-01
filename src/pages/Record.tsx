@@ -421,41 +421,121 @@ const Record = () => {
 
   // Build the combined recording stream: camera+mic from getUserMedia
   // plus music routed through Web Audio so it ends up inside the saved video.
-  const buildRecordingStream = async (): Promise<MediaStream> => {
+  // The video track is composed from a canvas locked to 9:16 (portrait) or
+  // 16:9 (landscape), so the saved file matches what the user sees on stage.
+  const startCompositionLoop = (ori: Orientation): MediaStream | null => {
+    const camVideo = videoRef.current;
+    if (!camVideo) return null;
+    const W = ori === "portrait" ? 1080 : 1920;
+    const H = ori === "portrait" ? 1920 : 1080;
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    compositionCanvasRef.current = canvas;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    const mirror = facing === "user" && !settings?.mirror ? false : facing === "user" && settings?.mirror ? true : false;
+    // Note: the live <video> preview already mirrors the front camera visually.
+    // For the saved file we mirror the front camera too (matches user expectation).
+    const mirrorOutput = facing === "user";
+
+    const draw = () => {
+      if (!camVideo.videoWidth || !camVideo.videoHeight) {
+        compositionRafRef.current = requestAnimationFrame(draw);
+        return;
+      }
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, W, H);
+
+      // cover-fit crop centered, with optional CSS-zoom emulation
+      const z = zoomRange.native ? 1 : Math.max(0.6, zoom);
+      const srcW = camVideo.videoWidth;
+      const srcH = camVideo.videoHeight;
+      const targetAspect = W / H;
+      const srcAspect = srcW / srcH;
+      let cropW = srcW;
+      let cropH = srcH;
+      if (srcAspect > targetAspect) {
+        // source wider → crop sides
+        cropW = srcH * targetAspect;
+      } else {
+        // source taller → crop top/bottom
+        cropH = srcW / targetAspect;
+      }
+      // Apply zoom by shrinking the crop window (zoom in) or expanding (zoom out).
+      cropW = cropW / z;
+      cropH = cropH / z;
+      // Clamp to source bounds (zoom < 1 may exceed).
+      cropW = Math.min(cropW, srcW);
+      cropH = Math.min(cropH, srcH);
+      const sx = (srcW - cropW) / 2;
+      const sy = (srcH - cropH) / 2;
+
+      ctx.save();
+      if (mirrorOutput) {
+        ctx.translate(W, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(camVideo, sx, sy, cropW, cropH, 0, 0, W, H);
+      ctx.restore();
+
+      compositionRafRef.current = requestAnimationFrame(draw);
+    };
+    draw();
+
+    const stream = (canvas as any).captureStream(30) as MediaStream;
+    compositionStreamRef.current = stream;
+    return stream;
+  };
+
+  const stopCompositionLoop = () => {
+    if (compositionRafRef.current) {
+      cancelAnimationFrame(compositionRafRef.current);
+      compositionRafRef.current = null;
+    }
+    compositionStreamRef.current?.getTracks().forEach((t) => t.stop());
+    compositionStreamRef.current = null;
+    compositionCanvasRef.current = null;
+  };
+
+  const buildRecordingStream = async (ori: Orientation): Promise<MediaStream> => {
     const camStream = streamRef.current!;
-    if (!music || !musicUrl || !musicAudioRef.current) return camStream;
+    const composedVideo = startCompositionLoop(ori);
+    const videoTracks = composedVideo
+      ? composedVideo.getVideoTracks()
+      : camStream.getVideoTracks();
+
+    if (!music || !musicUrl || !musicAudioRef.current) {
+      return new MediaStream([...videoTracks, ...camStream.getAudioTracks()]);
+    }
 
     try {
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioCtxRef.current = ctx;
       await ctx.resume();
 
-      // Music graph
       const musicSource = ctx.createMediaElementSource(musicAudioRef.current);
       const musicGain = ctx.createGain();
-      musicGain.gain.value = 0; // start silent, fade in
+      musicGain.gain.value = 0;
       musicGainRef.current = musicGain;
       const dest = ctx.createMediaStreamDestination();
       musicDestRef.current = dest;
-      // Route music to both the recording destination AND the speakers
       musicSource.connect(musicGain);
       musicGain.connect(dest);
       musicGain.connect(ctx.destination);
 
-      // Mic graph (route mic into the same destination so the recording has both)
       const micStream = new MediaStream(camStream.getAudioTracks());
       const micSource = ctx.createMediaStreamSource(micStream);
       micSource.connect(dest);
 
-      // Combine video tracks from camera + mixed audio track from destination
-      const combined = new MediaStream([
-        ...camStream.getVideoTracks(),
+      return new MediaStream([
+        ...videoTracks,
         ...dest.stream.getAudioTracks(),
       ]);
-      return combined;
     } catch (err) {
       console.warn("Music mix failed, recording without music in video:", err);
-      return camStream;
+      return new MediaStream([...videoTracks, ...camStream.getAudioTracks()]);
     }
   };
 
@@ -583,6 +663,8 @@ const Record = () => {
   const startCountdownAndRecord = () => {
     if (!streamRef.current) return toast.error("Câmera não disponível");
     if (!scriptContent.trim()) return toast.error("Roteiro vazio");
+    // Lock orientation at the moment user hits record (default ON, as approved).
+    setLockedOrientation(orientation);
     const sec = settings?.countdown_seconds ?? 3;
     setPhase("countdown");
     setCountdown(sec);
@@ -605,7 +687,8 @@ const Record = () => {
       : MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
       ? "video/webm;codecs=vp8,opus"
       : "video/webm";
-    const recordingStream = await buildRecordingStream();
+    const ori = lockedOrientation ?? orientation;
+    const recordingStream = await buildRecordingStream(ori);
     const mr = new MediaRecorder(recordingStream, { mimeType });
     mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
     mr.onstop = () => {
@@ -617,6 +700,8 @@ const Record = () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       recognitionRef.current?.stop?.();
       stopMusicPlayback();
+      stopCompositionLoop();
+      setLockedOrientation(null);
     };
     mr.start(1000);
     recorderRef.current = mr;
