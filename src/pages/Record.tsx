@@ -732,6 +732,53 @@ const Record = () => {
               </div>
             </div>
           )}
+
+          {/* Music mini-player during recording */}
+          {phase === "recording" && music && musicUrl && (
+            <div className="absolute bottom-32 right-4 z-20 bg-black/75 backdrop-blur rounded-2xl p-3 w-72 space-y-2 border border-white/10 text-white">
+              <div className="flex items-center gap-2">
+                <Music className="w-4 h-4 text-primary" />
+                <span className="text-xs truncate flex-1" title={music.music_filename ?? ""}>
+                  {music.music_filename || "música"}
+                </span>
+                <span className="text-[10px] font-mono opacity-70">
+                  {fmtTime(musicTime)}/{fmtTime(musicDuration)}
+                </span>
+              </div>
+              <Slider
+                value={[musicTime]}
+                min={0}
+                max={musicDuration || 0.001}
+                step={0.5}
+                onValueChange={(v) => seekMusic(v[0])}
+              />
+              <div className="flex items-center gap-1">
+                <Button size="sm" variant="secondary" className="h-8 w-8 p-0" onClick={() => nudgeMusic(-10)}>
+                  <SkipBack className="w-3.5 h-3.5" />
+                </Button>
+                <Button size="sm" variant="secondary" className="h-8 w-8 p-0" onClick={toggleMusic}>
+                  {musicPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                </Button>
+                <Button size="sm" variant="secondary" className="h-8 w-8 p-0" onClick={() => nudgeMusic(10)}>
+                  <SkipForward className="w-3.5 h-3.5" />
+                </Button>
+                <Button size="sm" variant="secondary" className="h-8 w-8 p-0 ml-1" onClick={toggleMute}>
+                  {musicMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                </Button>
+                <Slider
+                  value={[musicMuted ? 0 : musicVolume * 100]}
+                  min={0}
+                  max={100}
+                  step={5}
+                  onValueChange={(v) => {
+                    if (musicMuted) setMusicMuted(false);
+                    changeMusicVolume(v[0] / 100);
+                  }}
+                  className="flex-1"
+                />
+              </div>
+            </div>
+          )}
         </>
       )}
 
