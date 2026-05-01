@@ -198,11 +198,23 @@ const Record = () => {
       const useFacing = preferredFacing ?? facing;
       // Stop any existing stream first to release the device cleanly.
       streamRef.current?.getTracks().forEach((t) => t.stop());
+      // Ask the browser for a stream that already matches the current stage
+      // orientation. This is critical on mobile: if we ask for 1920x1080 while
+      // the phone is in portrait, the browser returns a horizontal frame and
+      // our 9:16 canvas crops the sides — producing a tight, distorted close-up
+      // and losing the surrounding environment. Matching the aspect lets the
+      // sensor open in portrait mode (e.g. 1080x1920) and use the full frame,
+      // matching the native camera app's framing.
+      const ori: Orientation = lockedOrientation ?? orientation;
+      const wantW = ori === "portrait" ? 1080 : 1920;
+      const wantH = ori === "portrait" ? 1920 : 1080;
+      const wantAspect = ori === "portrait" ? 9 / 16 : 16 / 9;
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: useFacing },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
+          width: { ideal: wantW },
+          height: { ideal: wantH },
+          aspectRatio: { ideal: wantAspect },
         },
         audio: true,
       });
@@ -241,7 +253,7 @@ const Record = () => {
       toast.error("Não foi possível acessar a câmera/microfone");
       console.error(err);
     }
-  }, [facing]);
+  }, [facing, lockedOrientation, orientation]);
 
   useEffect(() => {
     initCamera(facing);
@@ -255,6 +267,18 @@ const Record = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Re-open the camera when the user rotates the device (only while not
+  // recording). This way the preview always reflects the framing that will
+  // actually be recorded — wide and natural in portrait, full frame in
+  // landscape — instead of being a sideways crop of a horizontal stream.
+  useEffect(() => {
+    if (phase === "recording" || phase === "countdown") return;
+    // Skip the very first mount (initCamera already ran in the mount effect).
+    const t = setTimeout(() => { initCamera(facing); }, 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orientation]);
 
   // Track viewport orientation (only updates `orientation` when not locked).
   useEffect(() => {
