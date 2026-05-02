@@ -25,6 +25,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses || true
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps
@@ -52,6 +57,10 @@ jobs:
         env:
           CAP_PRODUCTION: '1'
 
+      - name: Make gradlew executable
+        working-directory: android
+        run: chmod +x ./gradlew
+
       - name: Build debug APK
         working-directory: android
         run: ./gradlew assembleDebug --stacktrace --info
@@ -62,3 +71,13 @@ jobs:
           name: autoteleprompter-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Upload Gradle logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-logs
+          path: |
+            android/build/**/*.log
+            android/app/build/**/*.log
+          if-no-files-found: ignore
