@@ -27,15 +27,23 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Build web app
         run: npm run build
         env:
           CAP_PRODUCTION: '1'
 
-      - name: Add Android platform
-        run: npx cap add android
+      - name: Verify dist folder
+        run: ls -la dist/ && test -f dist/index.html
+
+      - name: Add Android platform (if missing)
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          else
+            echo "Android folder already exists, skipping add"
+          fi
         env:
           CAP_PRODUCTION: '1'
 
@@ -46,7 +54,7 @@ jobs:
 
       - name: Build debug APK
         working-directory: android
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug --stacktrace --info
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
