@@ -11,6 +11,7 @@ import SettingsPage from "./pages/SettingsPage.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import { AuthProvider } from "./hooks/useAuth";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { PlatformGate } from "./components/PlatformGate";
 
 const queryClient = new QueryClient();
 
@@ -19,19 +20,21 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
-        <AuthProvider>
-          <Routes>
-            <Route path="/auth" element={<Auth />} />
-            <Route path="/" element={<ProtectedRoute><Library /></ProtectedRoute>} />
-            <Route path="/script/:id" element={<ProtectedRoute><ScriptEditor /></ProtectedRoute>} />
-            <Route path="/record/:scriptId" element={<ProtectedRoute><Record /></ProtectedRoute>} />
-            <Route path="/record" element={<ProtectedRoute><Record /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </AuthProvider>
-      </BrowserRouter>
+      <PlatformGate>
+        <BrowserRouter>
+          <AuthProvider>
+            <Routes>
+              <Route path="/auth" element={<Auth />} />
+              <Route path="/" element={<ProtectedRoute><Library /></ProtectedRoute>} />
+              <Route path="/script/:id" element={<ProtectedRoute><ScriptEditor /></ProtectedRoute>} />
+              <Route path="/record/:scriptId" element={<ProtectedRoute><Record /></ProtectedRoute>} />
+              <Route path="/record" element={<ProtectedRoute><Record /></ProtectedRoute>} />
+              <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </AuthProvider>
+        </BrowserRouter>
+      </PlatformGate>
     </TooltipProvider>
   </QueryClientProvider>
 );
